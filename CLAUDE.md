@@ -90,8 +90,14 @@ tables you've marked private), etc.
 
 Leaderboard of who invited who, with join counts per link.
 
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+People create invite links (optional expiry in days and max-use cap) and
+share them; when someone opens the app through a link, that join is recorded
+for the inviter. A person is counted once, ever, for the first invite that
+brought them here (`invite_joins.invitee_user_id` is UNIQUE). Self-invites,
+expired links and used-up links are refused.
+
+Tables: `invite_links` and `invite_joins`, both public (usernames and counts
+only). The old template `presses` table is no longer used by any code.
 
 ## App-specific conventions
 

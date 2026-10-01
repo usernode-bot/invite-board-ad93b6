@@ -1,4 +1,24 @@
 {
   "description": "Leaderboard of who invited who, with join counts per link.",
-  "secrets": []
+  "secrets": [],
+  "tests": [
+    {
+      "id": "board.leaderboard",
+      "name": "Leaderboard renders with seeded inviters",
+      "path": "/",
+      "expectText": "staging-demo-alice",
+      "visual": true,
+      "impact": ["public/index.html", "server.js"]
+    },
+    {
+      "name": "My invites tab is the active view",
+      "path": "/?tab=mine",
+      "expectSelector": "#view-mine:not(.hidden)"
+    },
+    {
+      "name": "Create link form opens",
+      "path": "/?tab=mine&create=1",
+      "expectSelector": "#overlay:not(.hidden)"
+    }
+  ]
 }

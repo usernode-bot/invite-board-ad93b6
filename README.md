@@ -1,27 +1,31 @@
 # Invite Board
 
-> **Starter template** — this repo was scaffolded by Homeroom Social
-> Vibecoding. Everything in it is placeholder example code until the
-> app's first real feature is built.
+A leaderboard of who invited whom on Homeroom, with join counts per invite
+link.
 
-The scaffold is a small working demo that proves the plumbing works:
+- **Leaderboard**: every person who created invite links, ranked by total
+  joins, with each link's own count and the people it brought in.
+- **My invites**: your links, their status (active, expired, used up), uses
+  left, and who joined through each one. One tap to copy a share link.
+- **Create link**: pick an expiry in days (or never) and a max-use cap
+  (or unlimited). Joins are recorded when someone opens the app through
+  your link; a person counts for the first invite that brought them here,
+  once ever.
 
-- **Sign-in** — the server verifies the platform-issued user token
-  (an RS256 JWT) on every request, so the app already knows who is
-  using it. No accounts to build.
-- **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a `presses` table.
-- **Live API** — two example routes (`/api/press`,
-  `/api/leaderboard`) read and write through a real Express server.
-- **Styling** — Tailwind CSS, precompiled by `npm run build` during
-  image creation with either Kubernetes/Paketo or standalone Docker.
+## How it works
 
-## Replacing the template
+- `invite_links` holds each link (random 8-char code, optional expiry and
+  use cap). `invite_joins` records each join with a UNIQUE invitee, so one
+  person can only ever be counted once.
+- Self-invites, expired links and used-up links are refused with a reason
+  the UI shows.
+- Staging previews seed a few obviously-fake links and joins
+  (`staging-demo-*` users) so the board is reviewable on an empty database.
 
-Open the app on Homeroom, tap the Homeroom icon in the header, choose
-**Start a new change**, and describe the app you want in plain English.
-The template will be replaced with your real app. You can also run
-Claude Code against this repo directly; start with `CLAUDE.md`, which
-carries the app-specific notes and points at the platform rules.
+## Development
 
-Once the real app exists, rewrite this README to describe it.
+```sh
+npm ci --include=dev
+npm run build   # compiles styles/tailwind-input.css -> public/tailwind.css
+npm start
+```
