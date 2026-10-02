@@ -174,6 +174,10 @@
 
       // -------------------------------------------------------------- tabs
       var tab = params.get('tab') === 'mine' ? 'mine' : 'leaderboard';
+      // Demo preview flag (?demo=1): sample link states, display only.
+      var DEMO = params.get('demo') === '1';
+      // The links currently shown in the My invites view, kept for tickMine().
+      var mineLinks = [];
       function showTab(next) {
         tab = next;
         $('view-leaderboard').classList.toggle('hidden', tab !== 'leaderboard');
@@ -191,15 +195,31 @@
       $('tab-mine').addEventListener('click', function () { showTab('mine'); });
 
       // ------------------------------------------------------------ helpers
-      function daysLeft(iso) {
-        if (!iso) return null;
-        return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
+      // Live countdown to a link's expiry: "Expires in 2d 4h", minutes-level
+      // under an hour, "Expired" once past. Kept current by tickMine() so it
+      // reads true without a reload.
+      function countdownText(iso) {
+        var ms = new Date(iso).getTime() - Date.now();
+        if (ms <= 0) return 'Expired';
+        var mins = Math.floor(ms / 60000);
+        var d = Math.floor(mins / 1440);
+        var h = Math.floor((mins % 1440) / 60);
+        var m = mins % 60;
+        if (d > 0) return 'Expires in ' + d + 'd ' + h + 'h';
+        if (h > 0) return 'Expires in ' + h + 'h ' + m + 'm';
+        return 'Expires in ' + Math.max(1, m) + 'm';
       }
-      function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+      // A link's current state, recomputed from its data rather than the
+      // load-time `active` flag, so a tick can flip a card that crosses its
+      // deadline while the view is open.
+      function statusFor(link) {
+        if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) {
+          return { dot: 'bg-zinc-600', text: 'Expired' };
+        }
+        if (link.maxUses != null && link.joins >= link.maxUses) {
+          return { dot: 'bg-zinc-600', text: 'Used up' };
+        }
+        return { dot: 'bg-green-500', text: 'Active' };
       }
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
@@ -209,9 +229,29 @@
       function shareUrl(link) {
         return location.origin + '/?invite=' + encodeURIComponent(link.code);
       }
-      function copyLink(link) {
+      // Brief "Copied!" on the button itself, so the confirmation sits where
+      // the tap landed as well as in the toast.
+      var copiedBtn = null;
+      var copiedTimer = null;
+      function flashCopied(btn) {
+        if (copiedTimer) {
+          clearTimeout(copiedTimer);
+          if (copiedBtn) copiedBtn.textContent = 'Copy link';
+        }
+        copiedBtn = btn;
+        btn.textContent = 'Copied!';
+        copiedTimer = setTimeout(function () {
+          copiedBtn.textContent = 'Copy link';
+          copiedBtn = null;
+          copiedTimer = null;
+        }, 2000);
+      }
+      function copyLink(link, btn) {
         var url = shareUrl(link);
-        function done() { toast('Link copied'); }
+        function done() {
+          toast('Link copied');
+          if (btn) flashCopied(btn);
+        }
         function fallback() {
           var ta = document.createElement('textarea');
           ta.value = url;
@@ -277,6 +317,7 @@
 
       // ---------------------------------------------------------- my invites
       function renderMine(links) {
+        mineLinks = links;
         var el = $('view-mine');
         if (!links.length) {
           el.innerHTML =
@@ -287,23 +328,28 @@
             '</div>';
           return;
         }
-        var html = '';
+        var html = DEMO
+          ? '<p class="text-xs text-zinc-500">Demo preview with sample links, not your real ones.</p>'
+          : '';
         links.forEach(function (link) {
-          var dot = link.active ? 'bg-green-500' : 'bg-zinc-600';
-          var status = link.active ? 'Active' : (daysLeft(link.expiresAt) !== null && daysLeft(link.expiresAt) <= 0 ? 'Expired' : 'Used up');
+          var st = statusFor(link);
           var pct = link.maxUses == null ? 0 : Math.min(100, Math.round((link.joins / link.maxUses) * 100));
           var bar = link.maxUses == null ? '' :
             '<div class="h-1.5 rounded-full bg-zinc-800 mt-3 overflow-hidden">' +
             '<div class="h-full rounded-full bg-violet-500" style="width:' + pct + '%"></div></div>';
-          html += '<article class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">' +
+          var expiry = link.expiresAt
+            ? '<span data-countdown="' + esc(link.expiresAt) + '">' + esc(countdownText(link.expiresAt)) + '</span>'
+            : '<span>Never expires</span>';
+          html += '<article class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4" data-code="' + esc(link.code) + '">' +
             '<div class="flex items-center justify-between gap-3">' +
             '<span class="font-mono text-sm font-semibold text-violet-300 truncate">' + esc(link.code) + '</span>' +
             '<button type="button" class="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-200 text-xs font-semibold px-3 py-1.5" data-copy="' + esc(link.code) + '">Copy link</button>' +
             '</div>' +
             '<div class="flex items-center gap-2 mt-2.5 text-xs text-zinc-400">' +
-            '<span class="w-1.5 h-1.5 rounded-full ' + dot + '"></span><span>' + status + '</span>' +
+            '<span class="w-1.5 h-1.5 rounded-full ' + st.dot + '" data-dot></span>' +
+            '<span data-status>' + st.text + '</span>' +
             '<span aria-hidden="true">·</span><span>' + usesText(link) + '</span>' +
-            '<span aria-hidden="true">·</span><span>' + expiryText(link) + '</span>' +
+            '<span aria-hidden="true">·</span>' + expiry +
             '</div>' + bar +
             (link.joins
               ? '<p class="text-xs text-zinc-600 mt-2.5">' + link.joins + (link.joins === 1 ? ' person joined' : ' people joined') + ': ' + link.invitees.map(function (n) { return '@' + esc(n); }).join(', ') + '</p>'
@@ -320,13 +366,55 @@
           .then(function (d) { renderLeaderboard(d.inviters); })
           .catch(function () { errorState('view-leaderboard', 'leaderboard'); });
       }
+      // Demo preview (?demo=1): sample link states rendered through the real
+      // renderMine path, so the countdown and copy button are reviewable and
+      // regression-checked without owning a link. Display only, no DB writes.
+      function demoLinks() {
+        var now = Date.now();
+        var DAY = 86400000;
+        return [
+          { code: 'demo2day', createdAt: new Date(now - 2 * DAY).toISOString(), expiresAt: new Date(now + 2 * DAY + 4 * 3600000).toISOString(), maxUses: 10, joins: 3, invitees: ['staging-demo-ben', 'staging-demo-cat', 'staging-demo-dev'], active: true },
+          { code: 'demosoon', createdAt: new Date(now - DAY).toISOString(), expiresAt: new Date(now + 45 * 60000).toISOString(), maxUses: null, joins: 0, invitees: [], active: true },
+          { code: 'demodone', createdAt: new Date(now - 3 * DAY).toISOString(), expiresAt: new Date(now - DAY).toISOString(), maxUses: 5, joins: 5, invitees: ['staging-demo-eli', 'staging-demo-fay'], active: false },
+          { code: 'demoplain', createdAt: new Date(now - DAY).toISOString(), expiresAt: null, maxUses: null, joins: 1, invitees: ['staging-demo-maya'], active: true }
+        ];
+      }
       function loadMine() {
+        if (DEMO) {
+          renderMine(demoLinks());
+          return Promise.resolve();
+        }
         return fetch('/api/links', { headers: headers })
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(function (d) { renderMine(d.links); })
           .catch(function () { errorState('view-mine', 'mine'); });
       }
       function reload() { return Promise.all([loadLeaderboard(), loadMine()]); }
+
+      // Tick the countdowns (and statuses) on the My invites cards so a link
+      // crossing its deadline updates without a reload. Demo cards tick too.
+      function tickMine() {
+        var cards = document.querySelectorAll('#view-mine article[data-code]');
+        for (var i = 0; i < cards.length; i++) {
+          var code = cards[i].getAttribute('data-code');
+          var link = null;
+          for (var j = 0; j < mineLinks.length; j++) {
+            if (mineLinks[j].code === code) { link = mineLinks[j]; break; }
+          }
+          if (!link) continue;
+          var st = statusFor(link);
+          var dot = cards[i].querySelector('[data-dot]');
+          if (dot) dot.className = 'w-1.5 h-1.5 rounded-full ' + st.dot;
+          var statusEl = cards[i].querySelector('[data-status]');
+          if (statusEl) statusEl.textContent = st.text;
+          var cd = cards[i].querySelector('[data-countdown]');
+          if (cd) cd.textContent = countdownText(link.expiresAt);
+        }
+      }
+      setInterval(tickMine, 30000);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) tickMine();
+      });
 
       // ------------------------------------------------------- create sheet
       function openCreate() {
@@ -373,7 +461,12 @@
             $('f-uses').value = '';
             showTab('mine');
             toast('Link created');
-            loadMine();
+            if (DEMO) {
+              mineLinks.unshift(res.d.link);
+              renderMine(mineLinks);
+            } else {
+              loadMine();
+            }
           })
           .catch(function (err) {
             errEl.textContent = err.message || 'Could not create the link. Try again.';
@@ -390,8 +483,7 @@
         var copyBtn = e.target.closest('[data-copy]');
         if (copyBtn) {
           var code = copyBtn.getAttribute('data-copy');
-          var link = { code: code };
-          copyLink(link);
+          copyLink({ code: code }, copyBtn);
           return;
         }
         if (e.target.closest('[data-open-create]')) { openCreate(); return; }

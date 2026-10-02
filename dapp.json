@@ -16,6 +16,15 @@
       "expectSelector": "#view-mine:not(.hidden)"
     },
     {
+      "id": "mine.demo-states",
+      "name": "My invites demo shows live countdown and copy button",
+      "path": "/?tab=mine&demo=1",
+      "expectSelector": "[data-countdown]",
+      "expectText": "Expires in",
+      "visual": true,
+      "impact": ["public/index.html"]
+    },
+    {
       "name": "Create link form opens",
       "path": "/?tab=mine&create=1",
       "expectSelector": "#overlay:not(.hidden)"
