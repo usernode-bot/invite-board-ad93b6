@@ -182,6 +182,8 @@
         var off = 'rounded-lg px-3 py-2 text-sm font-semibold text-zinc-500';
         $('tab-leaderboard').className = tab === 'leaderboard' ? on : off;
         $('tab-mine').className = tab === 'mine' ? on : off;
+        // Returning to My invites shows a fresh countdown at once.
+        if (tab === 'mine') refreshCountdowns();
         // Keep the URL shareable without pinning transient UI state.
         params.delete('tab'); params.delete('create');
         if (tab === 'mine') params.set('tab', 'mine');
@@ -195,11 +197,23 @@
         if (!iso) return null;
         return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
       }
-      function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+      // Countdown text for a link's expiry: pure formatting over the
+      // server's expiresAt timestamp and the device clock.
+      function expiryCountdown(iso) {
+        var ms = new Date(iso).getTime() - Date.now();
+        if (ms <= 0) return 'Expired';
+        if (ms >= 86400000) {
+          var d = Math.floor(ms / 86400000);
+          var h = Math.floor((ms % 86400000) / 3600000);
+          return 'Expires in ' + d + 'd ' + h + 'h';
+        }
+        if (ms >= 3600000) {
+          var hh = Math.floor(ms / 3600000);
+          var m = Math.floor((ms % 3600000) / 60000);
+          return 'Expires in ' + hh + 'h ' + m + 'm';
+        }
+        if (ms >= 60000) return 'Expires in ' + Math.floor(ms / 60000) + 'm';
+        return 'Expires in under 1m';
       }
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
@@ -303,7 +317,10 @@
             '<div class="flex items-center gap-2 mt-2.5 text-xs text-zinc-400">' +
             '<span class="w-1.5 h-1.5 rounded-full ' + dot + '"></span><span>' + status + '</span>' +
             '<span aria-hidden="true">·</span><span>' + usesText(link) + '</span>' +
-            '<span aria-hidden="true">·</span><span>' + expiryText(link) + '</span>' +
+            '<span aria-hidden="true">·</span>' +
+            (link.expiresAt
+              ? '<span data-expiry data-expires-at="' + esc(link.expiresAt) + '">' + expiryCountdown(link.expiresAt) + '</span>'
+              : '<span>Never expires</span>') +
             '</div>' + bar +
             (link.joins
               ? '<p class="text-xs text-zinc-600 mt-2.5">' + link.joins + (link.joins === 1 ? ' person joined' : ' people joined') + ': ' + link.invitees.map(function (n) { return '@' + esc(n); }).join(', ') + '</p>'
@@ -312,6 +329,24 @@
         });
         el.innerHTML = html;
       }
+
+      // ------------------------------------------------- expiry countdowns
+      // One interval rewrites the expiry spans in place; it never re-renders
+      // the cards and never refetches. It pauses while the document is
+      // hidden or the My invites view is not showing.
+      function refreshCountdowns() {
+        if (document.hidden) return;
+        var view = $('view-mine');
+        if (view.classList.contains('hidden')) return;
+        var spans = view.querySelectorAll('[data-expiry]');
+        for (var i = 0; i < spans.length; i++) {
+          spans[i].textContent = expiryCountdown(spans[i].getAttribute('data-expires-at'));
+        }
+      }
+      setInterval(refreshCountdowns, 60000);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) refreshCountdowns();
+      });
 
       // -------------------------------------------------------------- loads
       function loadLeaderboard() {
@@ -323,7 +358,7 @@
       function loadMine() {
         return fetch('/api/links', { headers: headers })
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function (d) { renderMine(d.links); })
+          .then(function (d) { renderMine(d.links); refreshCountdowns(); })
           .catch(function () { errorState('view-mine', 'mine'); });
       }
       function reload() { return Promise.all([loadLeaderboard(), loadMine()]); }
