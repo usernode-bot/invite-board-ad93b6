@@ -186,20 +186,35 @@
         params.delete('tab'); params.delete('create');
         if (tab === 'mine') params.set('tab', 'mine');
         history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
+        syncMineTimer();
       }
       $('tab-leaderboard').addEventListener('click', function () { showTab('leaderboard'); });
       $('tab-mine').addEventListener('click', function () { showTab('mine'); });
 
       // ------------------------------------------------------------ helpers
-      function daysLeft(iso) {
-        if (!iso) return null;
-        return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
+      // Time remaining on an invite: days and hours, then hours and minutes,
+      // then minutes. Minutes round down, so the text never jumps ahead.
+      function countdownText(iso) {
+        if (!iso) return 'Never expires';
+        var ms = new Date(iso).getTime() - Date.now();
+        if (ms <= 0) return 'Expired';
+        var mins = Math.floor(ms / 60000);
+        var d = Math.floor(mins / 1440);
+        var h = Math.floor((mins % 1440) / 60);
+        var m = mins % 60;
+        if (d > 0) return 'Expires in ' + d + 'd ' + h + 'h';
+        if (h > 0) return 'Expires in ' + h + 'h ' + m + 'm';
+        return 'Expires in ' + Math.max(1, m) + 'm';
       }
-      function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+      // Mirrors the server's isActive order: expiry first, then the use cap.
+      function statusFor(link) {
+        if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) {
+          return { dot: 'bg-zinc-600', text: 'Expired' };
+        }
+        if (link.maxUses != null && link.joins >= link.maxUses) {
+          return { dot: 'bg-zinc-600', text: 'Used up' };
+        }
+        return { dot: 'bg-green-500', text: 'Active' };
       }
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
@@ -276,7 +291,14 @@
       }
 
       // ---------------------------------------------------------- my invites
+      // The last list rendered, so a timer tick can match each card to its
+      // link by code without re-rendering (and without losing the copy
+      // button's focus or a pending tap).
+      var mineLinks = [];
+      var mineTimer = null;
+
       function renderMine(links) {
+        mineLinks = links || [];
         var el = $('view-mine');
         if (!links.length) {
           el.innerHTML =
@@ -289,21 +311,20 @@
         }
         var html = '';
         links.forEach(function (link) {
-          var dot = link.active ? 'bg-green-500' : 'bg-zinc-600';
-          var status = link.active ? 'Active' : (daysLeft(link.expiresAt) !== null && daysLeft(link.expiresAt) <= 0 ? 'Expired' : 'Used up');
+          var st = statusFor(link);
           var pct = link.maxUses == null ? 0 : Math.min(100, Math.round((link.joins / link.maxUses) * 100));
           var bar = link.maxUses == null ? '' :
             '<div class="h-1.5 rounded-full bg-zinc-800 mt-3 overflow-hidden">' +
             '<div class="h-full rounded-full bg-violet-500" style="width:' + pct + '%"></div></div>';
-          html += '<article class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">' +
+          html += '<article class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4" data-code="' + esc(link.code) + '">' +
             '<div class="flex items-center justify-between gap-3">' +
             '<span class="font-mono text-sm font-semibold text-violet-300 truncate">' + esc(link.code) + '</span>' +
             '<button type="button" class="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-200 text-xs font-semibold px-3 py-1.5" data-copy="' + esc(link.code) + '">Copy link</button>' +
             '</div>' +
             '<div class="flex items-center gap-2 mt-2.5 text-xs text-zinc-400">' +
-            '<span class="w-1.5 h-1.5 rounded-full ' + dot + '"></span><span>' + status + '</span>' +
+            '<span class="w-1.5 h-1.5 rounded-full ' + st.dot + '" data-dot></span><span data-status>' + st.text + '</span>' +
             '<span aria-hidden="true">·</span><span>' + usesText(link) + '</span>' +
-            '<span aria-hidden="true">·</span><span>' + expiryText(link) + '</span>' +
+            '<span aria-hidden="true">·</span><span' + (link.expiresAt ? ' data-countdown' : '') + '>' + countdownText(link.expiresAt) + '</span>' +
             '</div>' + bar +
             (link.joins
               ? '<p class="text-xs text-zinc-600 mt-2.5">' + link.joins + (link.joins === 1 ? ' person joined' : ' people joined') + ': ' + link.invitees.map(function (n) { return '@' + esc(n); }).join(', ') + '</p>'
@@ -312,6 +333,44 @@
         });
         el.innerHTML = html;
       }
+
+      // Update only the status and expiry text in place, so the copy button
+      // and its focus survive. Cards are matched to the last-rendered list
+      // by code; an empty or error view simply has no cards to tick.
+      function tickMine() {
+        var cards = document.querySelectorAll('#view-mine article[data-code]');
+        for (var i = 0; i < cards.length; i++) {
+          var card = cards[i];
+          var code = card.getAttribute('data-code');
+          var link = null;
+          for (var j = 0; j < mineLinks.length; j++) {
+            if (mineLinks[j].code === code) { link = mineLinks[j]; break; }
+          }
+          if (!link) continue;
+          var st = statusFor(link);
+          var dot = card.querySelector('[data-dot]');
+          if (dot) dot.className = 'w-1.5 h-1.5 rounded-full ' + st.dot;
+          var status = card.querySelector('[data-status]');
+          if (status) status.textContent = st.text;
+          var countdown = card.querySelector('[data-countdown]');
+          if (countdown) countdown.textContent = countdownText(link.expiresAt);
+        }
+      }
+
+      // Tick once a minute, only while My invites is showing and the browser
+      // tab is visible. Starting calls tickMine at once so returning to the
+      // tab catches up without waiting for the first interval.
+      function syncMineTimer() {
+        var on = tab === 'mine' && !document.hidden;
+        if (on && mineTimer === null) {
+          tickMine();
+          mineTimer = setInterval(tickMine, 60000);
+        } else if (!on && mineTimer !== null) {
+          clearInterval(mineTimer);
+          mineTimer = null;
+        }
+      }
+      document.addEventListener('visibilitychange', syncMineTimer);
 
       // -------------------------------------------------------------- loads
       function loadLeaderboard() {
