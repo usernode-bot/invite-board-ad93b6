@@ -182,6 +182,9 @@
         var off = 'rounded-lg px-3 py-2 text-sm font-semibold text-zinc-500';
         $('tab-leaderboard').className = tab === 'leaderboard' ? on : off;
         $('tab-mine').className = tab === 'mine' ? on : off;
+        // Coming back to My invites, catch the countdown up from the cache
+        // (ticks were skipped while this tab was hidden).
+        if (tab === 'mine' && mineLinks) renderMine(mineLinks);
         // Keep the URL shareable without pinning transient UI state.
         params.delete('tab'); params.delete('create');
         if (tab === 'mine') params.set('tab', 'mine');
@@ -195,11 +198,19 @@
         if (!iso) return null;
         return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
       }
+      // Live countdown off the device clock: "2d 4h left", "4h 12m left",
+      // "40m left", "Expired". Minutes round up so the last minute still
+      // shows "1m left" and the format never shows 0h for time still left.
       function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+        var iso = link.expiresAt;
+        if (!iso) return 'Never expires';
+        var ms = new Date(iso).getTime() - Date.now();
+        if (ms <= 0) return 'Expired';
+        var mins = Math.ceil(ms / 60000);
+        if (mins < 60) return mins + 'm left';
+        var h = Math.floor(mins / 60), m = mins % 60;
+        if (h < 24) return h + 'h ' + m + 'm left';
+        return Math.floor(h / 24) + 'd ' + (h % 24) + 'h left';
       }
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
@@ -289,8 +300,14 @@
         }
         var html = '';
         links.forEach(function (link) {
-          var dot = link.active ? 'bg-green-500' : 'bg-zinc-600';
-          var status = link.active ? 'Active' : (daysLeft(link.expiresAt) !== null && daysLeft(link.expiresAt) <= 0 ? 'Expired' : 'Used up');
+          // link.active is server-computed at load, so a link that expires
+          // between ticks still shows active:true: re-check the clock here
+          // so status word and dot flip to Expired on the same tick as the
+          // countdown.
+          var expiredNow = daysLeft(link.expiresAt) !== null && daysLeft(link.expiresAt) <= 0;
+          var live = link.active && !expiredNow;
+          var dot = live ? 'bg-green-500' : 'bg-zinc-600';
+          var status = live ? 'Active' : (expiredNow ? 'Expired' : 'Used up');
           var pct = link.maxUses == null ? 0 : Math.min(100, Math.round((link.joins / link.maxUses) * 100));
           var bar = link.maxUses == null ? '' :
             '<div class="h-1.5 rounded-full bg-zinc-800 mt-3 overflow-hidden">' +
@@ -320,10 +337,13 @@
           .then(function (d) { renderLeaderboard(d.inviters); })
           .catch(function () { errorState('view-leaderboard', 'leaderboard'); });
       }
+      // Cached copy of /api/links so the expiry tick can redraw without
+      // refetching; join counts refresh only on the next load of the tab.
+      var mineLinks = null;
       function loadMine() {
         return fetch('/api/links', { headers: headers })
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function (d) { renderMine(d.links); })
+          .then(function (d) { mineLinks = d.links; renderMine(d.links); })
           .catch(function () { errorState('view-mine', 'mine'); });
       }
       function reload() { return Promise.all([loadLeaderboard(), loadMine()]); }
@@ -436,6 +456,22 @@
       // Open the create form directly when linked as ?create=1
       // (share/deep-link entry point for the form).
       if (wantsCreate) openCreate();
+
+      // Expiry countdown tick: redraw from the cache about once a minute
+      // while the My invites tab is showing, so the countdown never goes
+      // stale and links flip to "Expired" on the tick after they run out.
+      setInterval(function () {
+        if (tab === 'mine' && document.visibilityState === 'visible' && mineLinks) {
+          renderMine(mineLinks);
+        }
+      }, 60000);
+      // Catch up at once when the app becomes visible again (it skipped
+      // ticks while hidden or while the Leaderboard tab was showing).
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible' && tab === 'mine' && mineLinks) {
+          renderMine(mineLinks);
+        }
+      });
     })();
   </script>
 </body>
