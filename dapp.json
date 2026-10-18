@@ -16,6 +16,12 @@
       "expectSelector": "#view-mine:not(.hidden)"
     },
     {
+      "name": "My invites shows uses left and a live expiry countdown",
+      "path": "/?tab=mine&demo=1",
+      "expectSelector": "#view-mine [data-expiry]",
+      "expectText": "left"
+    },
+    {
       "name": "Create link form opens",
       "path": "/?tab=mine&create=1",
       "expectSelector": "#overlay:not(.hidden)"

@@ -276,6 +276,34 @@ app.get('/api/leaderboard', async (req, res) => {
 // My invites: the signed-in user's links with uses left.
 app.get('/api/links', async (req, res) => {
   try {
+    // Staging-only demo: ?demo=1 returns obviously-fake links as this
+    // viewer's own, so PR previews and checks can show "My invites"
+    // populated on a fresh staging database (which has no links for the
+    // signed-in visitor). Production never answers this.
+    if (IS_STAGING && req.query.demo === '1') {
+      // Agree with the page's preview "now" when a staging preview was
+      // opened at a chosen moment.
+      const raw = req.headers['x-usernode-now'] || req.query['un-now'];
+      const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+      const base = IS_STAGING && typeof raw === 'string' && PREVIEW_NOW.test(raw)
+        ? new Date(raw).getTime() : Date.now();
+      const iso = ms => new Date(ms).toISOString();
+      const demo = [
+        { code: 'demolink1', maxUses: 5, joins: 2, invitees: ['staging-demo-ben', 'staging-demo-cat'], expiresAt: iso(base + 2 * 86400000 + 4 * 3600000), active: true },
+        { code: 'demolink2', maxUses: 1, joins: 1, invitees: ['staging-demo-eli'], expiresAt: null, active: false },
+        { code: 'demolink3', maxUses: null, joins: 0, invitees: [], expiresAt: iso(base + 47 * 60000), active: true },
+        { code: 'demolink4', maxUses: null, joins: 3, invitees: ['staging-demo-fay', 'staging-demo-gus', 'staging-demo-dev'], expiresAt: iso(base - 3600000), active: false },
+      ];
+      return res.json({
+        me: { id: req.user.id, username: req.user.username },
+        links: demo.map(d => ({
+          ...d,
+          creator: req.user.username,
+          mine: true,
+          createdAt: iso(base - 5 * 86400000),
+        })),
+      });
+    }
     const rows = await loadLinks('WHERE l.creator_user_id = $1', [req.user.id]);
     res.json({
       me: { id: req.user.id, username: req.user.username },
