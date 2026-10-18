@@ -182,6 +182,8 @@
         var off = 'rounded-lg px-3 py-2 text-sm font-semibold text-zinc-500';
         $('tab-leaderboard').className = tab === 'leaderboard' ? on : off;
         $('tab-mine').className = tab === 'mine' ? on : off;
+        // Coming back to the tab repaints the countdowns immediately.
+        if (tab === 'mine') updateExpiries();
         // Keep the URL shareable without pinning transient UI state.
         params.delete('tab'); params.delete('create');
         if (tab === 'mine') params.set('tab', 'mine');
@@ -195,11 +197,20 @@
         if (!iso) return null;
         return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
       }
-      function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+      // Live countdown from the device clock to the link's expiry: days and
+      // hours when more than a day remains, hours and minutes (rounded up,
+      // so a few seconds still show "0h 1m left") under a day, "Expired"
+      // once past, "Never expires" when unset.
+      function countdownText(iso) {
+        if (!iso) return 'Never expires';
+        var ms = new Date(iso).getTime() - Date.now();
+        if (ms <= 0) return 'Expired';
+        var d = Math.floor(ms / 86400000);
+        var h = Math.floor((ms % 86400000) / 3600000);
+        var m = Math.ceil((ms % 3600000) / 60000);
+        if (m === 60) { m = 0; h += 1; if (h === 24) { h = 0; d += 1; } }
+        if (d > 0) return d + 'd ' + h + 'h left';
+        return h + 'h ' + m + 'm left';
       }
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
@@ -303,7 +314,10 @@
             '<div class="flex items-center gap-2 mt-2.5 text-xs text-zinc-400">' +
             '<span class="w-1.5 h-1.5 rounded-full ' + dot + '"></span><span>' + status + '</span>' +
             '<span aria-hidden="true">·</span><span>' + usesText(link) + '</span>' +
-            '<span aria-hidden="true">·</span><span>' + expiryText(link) + '</span>' +
+            '<span aria-hidden="true">·</span>' +
+            (link.expiresAt
+              ? '<span data-expires="' + esc(link.expiresAt) + '">' + esc(countdownText(link.expiresAt)) + '</span>'
+              : '<span>Never expires</span>') +
             '</div>' + bar +
             (link.joins
               ? '<p class="text-xs text-zinc-600 mt-2.5">' + link.joins + (link.joins === 1 ? ' person joined' : ' people joined') + ': ' + link.invitees.map(function (n) { return '@' + esc(n); }).join(', ') + '</p>'
@@ -312,6 +326,23 @@
         });
         el.innerHTML = html;
       }
+
+      // --------------------------------------------------- expiry countdown
+      // Ticks the live countdowns on the My invites cards. It only rewrites
+      // each expiry span's text from its data-expires attribute; it never
+      // re-fetches or re-renders the cards, and it does nothing while the
+      // leaderboard tab is showing or the app is hidden (the next visible
+      // tick, tab switch or return repaints stale text immediately).
+      function updateExpiries() {
+        if (tab !== 'mine' || document.hidden) return;
+        var spans = document.querySelectorAll('#view-mine [data-expires]');
+        for (var i = 0; i < spans.length; i++) {
+          var iso = spans[i].getAttribute('data-expires');
+          if (iso) spans[i].textContent = countdownText(iso);
+        }
+      }
+      setInterval(updateExpiries, 60000);
+      document.addEventListener('visibilitychange', updateExpiries);
 
       // -------------------------------------------------------------- loads
       function loadLeaderboard() {
