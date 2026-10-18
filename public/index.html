@@ -182,6 +182,8 @@
         var off = 'rounded-lg px-3 py-2 text-sm font-semibold text-zinc-500';
         $('tab-leaderboard').className = tab === 'leaderboard' ? on : off;
         $('tab-mine').className = tab === 'mine' ? on : off;
+        if (tab === 'mine') { tickCountdowns(); startCountdown(); }
+        else stopCountdown();
         // Keep the URL shareable without pinning transient UI state.
         params.delete('tab'); params.delete('create');
         if (tab === 'mine') params.set('tab', 'mine');
@@ -190,16 +192,48 @@
       $('tab-leaderboard').addEventListener('click', function () { showTab('leaderboard'); });
       $('tab-mine').addEventListener('click', function () { showTab('mine'); });
 
+      // Pause the countdown while the browser tab is hidden; catch up the
+      // moment it is shown again.
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) { stopCountdown(); return; }
+        if (tab === 'mine') { tickCountdowns(); startCountdown(); }
+      });
+
       // ------------------------------------------------------------ helpers
       function daysLeft(iso) {
         if (!iso) return null;
         return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
       }
-      function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+      function expiryText(link, now) {
+        if (!link.expiresAt) return 'Never expires';
+        var ms = new Date(link.expiresAt).getTime() - now;
+        if (!(ms > 0)) return 'Expired';
+        var mins = Math.floor(ms / 60000);
+        if (mins < 1) return 'expires in <1m';
+        var d = Math.floor(mins / 1440);
+        var h = Math.floor((mins % 1440) / 60);
+        var m = mins % 60;
+        if (d > 0) return 'expires in ' + d + 'd ' + h + 'h';
+        if (h > 0) return 'expires in ' + h + 'h ' + m + 'm';
+        return 'expires in ' + m + 'm';
+      }
+      // Live expiry countdowns: one interval for the whole page, only while
+      // My invites is showing and the browser tab is visible.
+      var countdownTimer = null;
+      function tickCountdowns() {
+        var now = Date.now();
+        var nodes = $('view-mine').querySelectorAll('[data-expires]');
+        for (var i = 0; i < nodes.length; i++) {
+          nodes[i].textContent = expiryText(
+            { expiresAt: nodes[i].getAttribute('data-expires') || null }, now);
+        }
+      }
+      function startCountdown() {
+        if (countdownTimer !== null || document.hidden) return;
+        countdownTimer = setInterval(tickCountdowns, 60000);
+      }
+      function stopCountdown() {
+        if (countdownTimer !== null) { clearInterval(countdownTimer); countdownTimer = null; }
       }
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
@@ -303,7 +337,8 @@
             '<div class="flex items-center gap-2 mt-2.5 text-xs text-zinc-400">' +
             '<span class="w-1.5 h-1.5 rounded-full ' + dot + '"></span><span>' + status + '</span>' +
             '<span aria-hidden="true">·</span><span>' + usesText(link) + '</span>' +
-            '<span aria-hidden="true">·</span><span>' + expiryText(link) + '</span>' +
+            '<span aria-hidden="true">·</span>' +
+            '<span data-expires="' + esc(link.expiresAt || '') + '">' + expiryText(link, Date.now()) + '</span>' +
             '</div>' + bar +
             (link.joins
               ? '<p class="text-xs text-zinc-600 mt-2.5">' + link.joins + (link.joins === 1 ? ' person joined' : ' people joined') + ': ' + link.invitees.map(function (n) { return '@' + esc(n); }).join(', ') + '</p>'
