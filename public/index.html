@@ -186,6 +186,7 @@
         params.delete('tab'); params.delete('create');
         if (tab === 'mine') params.set('tab', 'mine');
         history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
+        syncExpiryTimer();
       }
       $('tab-leaderboard').addEventListener('click', function () { showTab('leaderboard'); });
       $('tab-mine').addEventListener('click', function () { showTab('mine'); });
@@ -196,11 +197,46 @@
         return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
       }
       function expiryText(link) {
-        var d = daysLeft(link.expiresAt);
-        if (d === null) return 'Never expires';
-        if (d <= 0) return 'Expired';
-        return d + (d === 1 ? ' day left' : ' days left');
+        if (!link.expiresAt) return 'Never expires';
+        var ms = new Date(link.expiresAt).getTime() - Date.now();
+        if (ms <= 0) return 'Expired';
+        var days = Math.floor(ms / 86400000);
+        var hours = Math.floor((ms % 86400000) / 3600000);
+        if (days > 0) return days + 'd ' + hours + 'h';
+        if (hours > 0) return hours + 'h';
+        return Math.max(1, Math.ceil((ms % 3600000) / 60000)) + 'm';
       }
+      // Live expiry: refresh the countdowns on My invites about once a
+      // minute, and only while that tab is open and the page is visible.
+      var expiryTimer = null;
+
+      function tickExpiries() {
+        var cards = document.querySelectorAll('#view-mine [data-expires]');
+        for (var i = 0; i < cards.length; i++) {
+          var iso = cards[i].getAttribute('data-expires');
+          if (!iso) continue;
+          var ms = new Date(iso).getTime() - Date.now();
+          var expiry = cards[i].querySelector('[data-expiry]');
+          if (expiry) expiry.textContent = expiryText({ expiresAt: iso });
+          if (ms <= 0) {
+            var status = cards[i].querySelector('[data-status]');
+            if (status) status.textContent = 'Expired';
+            var dot = cards[i].querySelector('[data-dot]');
+            if (dot) { dot.classList.remove('bg-green-500'); dot.classList.add('bg-zinc-600'); }
+          }
+        }
+      }
+
+      function syncExpiryTimer() {
+        clearInterval(expiryTimer);
+        expiryTimer = null;
+        if (tab !== 'mine' || document.hidden) return;
+        tickExpiries();
+        expiryTimer = setInterval(tickExpiries, 60000);
+      }
+
+      document.addEventListener('visibilitychange', syncExpiryTimer);
+
       function usesText(link) {
         if (link.maxUses == null) return 'Unlimited uses';
         var left = Math.max(0, link.maxUses - link.joins);
@@ -295,15 +331,15 @@
           var bar = link.maxUses == null ? '' :
             '<div class="h-1.5 rounded-full bg-zinc-800 mt-3 overflow-hidden">' +
             '<div class="h-full rounded-full bg-violet-500" style="width:' + pct + '%"></div></div>';
-          html += '<article class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">' +
+          html += '<article class="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4" data-expires="' + (link.expiresAt ? esc(link.expiresAt) : '') + '">' +
             '<div class="flex items-center justify-between gap-3">' +
             '<span class="font-mono text-sm font-semibold text-violet-300 truncate">' + esc(link.code) + '</span>' +
             '<button type="button" class="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-200 text-xs font-semibold px-3 py-1.5" data-copy="' + esc(link.code) + '">Copy link</button>' +
             '</div>' +
             '<div class="flex items-center gap-2 mt-2.5 text-xs text-zinc-400">' +
-            '<span class="w-1.5 h-1.5 rounded-full ' + dot + '"></span><span>' + status + '</span>' +
+            '<span class="w-1.5 h-1.5 rounded-full ' + dot + '" data-dot></span><span data-status>' + status + '</span>' +
             '<span aria-hidden="true">·</span><span>' + usesText(link) + '</span>' +
-            '<span aria-hidden="true">·</span><span>' + expiryText(link) + '</span>' +
+            '<span aria-hidden="true">·</span><span data-expiry>' + expiryText(link) + '</span>' +
             '</div>' + bar +
             (link.joins
               ? '<p class="text-xs text-zinc-600 mt-2.5">' + link.joins + (link.joins === 1 ? ' person joined' : ' people joined') + ': ' + link.invitees.map(function (n) { return '@' + esc(n); }).join(', ') + '</p>'
